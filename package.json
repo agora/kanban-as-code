@@ -1,0 +1,27 @@
+{
+  "name": "kanban-as-code",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A clean starter kit + CLI for Kanban-as-Code workflows.",
+  "type": "module",
+  "bin": {
+    "kan": "bin/kan.js"
+  },
+  "scripts": {
+    "start": "node bin/kan.js",
+    "lint": "node bin/kan.js lint"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "fast-glob": "^3.3.2",
+    "gray-matter": "^4.0.3",
+    "zod": "^3.24.2"
+  },
+  "keywords": [
+    "kanban",
+    "docs-as-code",
+    "roadmap",
+    "task-management",
+    "cli"
+  ]
+}

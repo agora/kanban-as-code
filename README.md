@@ -1,0 +1,176 @@
+# Kanban-as-Code (Open Source)
+
+[![GitHub Repo](https://img.shields.io/badge/GitHub-kanban--as--code-181717?logo=github)](https://github.com/agora/kanban-as-code)
+[![License](https://img.shields.io/github/license/agora/kanban-as-code)](https://github.com/agora/kanban-as-code/blob/main/LICENSE)
+[![Stars](https://img.shields.io/github/stars/agora/kanban-as-code?style=social)](https://github.com/agora/kanban-as-code/stargazers)
+[![Open Issues](https://img.shields.io/github/issues/agora/kanban-as-code)](https://github.com/agora/kanban-as-code/issues)
+
+## One-liner
+
+**Kanban-as-Code is a git-native execution framework that turns planning into versioned, machine-validated markdown so teams can coordinate strategy, scope, and delivery from a single source of truth.**
+
+## Introduction
+
+Kanban-as-Code is a lightweight planning system that stores strategy, roadmap, and task execution data in plain markdown files with strict schema validation. Instead of treating planning docs as static notes, it makes them first-class development artifacts: auditable, reviewable, queryable, and safe for parallel execution.
+
+The `kan` CLI initializes the system, validates frontmatter and cross-references, coordinates agent ownership, and supports a structured loop (`plan → work → review → compound`) so multi-agent work stays consistent over time.
+
+The system is intentionally portable:
+- any standalone repo, and
+- any existing Turborepo repo with minimal optional wiring.
+
+GitHub: https://github.com/agora/kanban-as-code
+
+It contains:
+
+- `kanban/` planning structure with strategy roots and roadmap documents
+- `docs/` knowledge space
+- `kan` CLI package (`bin/kan.js`) to bootstrap, lint, and validate the repository
+- strict frontmatter schemas (via Zod) + cross-reference checks
+
+## Contributing
+
+PR workflow for the `kanban-as-code` project:
+
+1. Fork and branch from `main`.
+2. Keep changes focused and small.
+3. Prefer documentation and template improvements over behavior changes in the core CLI unless required.
+4. Run `kan lint --json` for planning-plane validation.
+5. Open a PR with a short summary of intent and validation notes.
+
+## Usage
+
+### Install and initialize
+
+From a fresh repo root:
+
+```bash
+npm init -y
+npx kan init
+```
+
+For a cleaner dogfood workspace in any repo (empty folders with `agents.md` in every planning/knowledge folder):
+
+```bash
+kan init --skeleton
+```
+
+### Typical commands
+
+```bash
+kan lint
+kan start --json
+kan build
+kan health
+kan agent init
+kan agent worktree <agent-name> --branch <branch>
+kan agent claim --scope <path> --agent <name>
+kan query '.[] | select(.status == "in-progress") | .id'
+kan query '.[] | sort_by(.status) | .[0:3]'
+kan evolve initiatives/my-doc-id --to review
+kan mv kanban/roadmap/initiatives/foo.md docs/archive/foo.md
+kan rm kanban/roadmap/initiatives/old.md --dry-run
+```
+
+`kan` supports JSON output with `--json` for machine/agent flows.
+`kan` also provides optional multi-agent commands:
+
+- `kan agent claim` (claim via target task or explicit scope)
+- `kan agent init` (bootstrap local worktree helper and, for non-starter repos, generate a PR agent-guard workflow)
+- `kan agent worktree` (provision a dedicated agent worktree)
+- `kan plugin list` / `kan plugin install <name>`
+- `kan loop --stage plan`, `kan loop --stage work`, `kan loop --stage review`, `kan loop --stage compound`
+- `kan loop --stage compound --auto --scope kanban` for autonomous post-merge compounding mode
+
+`kan agent init` flags:
+- `--workflow` to force creating the PR guard workflow even when a starter workflow exists.
+- `--no-workflow` to skip generating the PR guard workflow.
+- `kan agent init` also writes `scripts/kan-agent-worktree.sh` for dedicated agent worktrees.
+
+## Agent bootstrap contract (required per session)
+
+Every agent session starts with exactly this command:
+
+```bash
+kan start --json
+```
+
+Read at least these fields before touching state:
+- `context.config.exists`
+- `context.config.isHealthy`
+- `context.collections[].exists`
+- `recommendedNext`
+- `capabilities`
+
+If `context.config.isHealthy` is false or a config error exists, resolve that first before `evolve`, `mv`, `rm`, or scope-changing work.
+
+## Design in one page
+
+- `kanban/` is the execution planning plane; durable artifacts are:
+  - `architecture-reference.md`
+  - `Strategy-Current.md`
+  - `strategic-execution-spec.md`
+- `docs/` is a stable knowledge index for references.
+- `docs/brainstorms/` stores compounding prompts and system memory.
+- `docs/compounds/` stores loop artifacts from `kan loop` execution.
+- IDs are stable (`id` in frontmatter) and should remain stable across renames/moves.
+- Every file is plain markdown with YAML frontmatter and is versioned in git.
+
+## Multi-agent collaboration
+
+Recommended pattern:
+
+- Use dedicated git worktrees and one branch per agent for primary isolation.
+- For same-worktree sessions, use `kan agent claim` and `kan agent guard` in pre-commit.
+- Prefer `kan agent claim --scope <scope>` when a task id is not available.
+
+## Folder quick start
+
+- `templates/starter/` is the bootstrap payload used by `kan init`.
+- `kan.config.json` configures collection paths + schemas.
+
+## CI
+
+For non-starter repos, run `kan agent init` to add dedicated pull-request guard and compound loop files:
+
+- `.github/workflows/kan-agent-scope-guard.yml` enforces `kan agent guard` on pull requests.
+- `.github/workflows/kan-compound-autopilot.yml` runs `kan loop --stage compound --auto` after merge when the plugin is installed.
+- Keep project CI (`kan lint`, `kan build`) in your existing workflow.
+- `compound.config.yaml` stores starter autopilot policy defaults for compounds.
+
+## Turborepo injection (optional, simplest path)
+
+Kanban is standalone by default. For host repos that already use Turborepo, follow this minimal path:
+
+1. Copy the starter payload:
+   - `kan init` in the host repo, or copy `templates/starter` into it.
+2. Keep using the default workflow above as-is (it still runs on any repo).
+3. Optional: wire into `turbo` by adding a root script and task that map to `kan lint`.
+
+Example:
+
+```json
+{
+  "$schema": "https://turbo.build/schema.json",
+  "tasks": {
+    "kanban-lint": {
+      "outputs": [".kan/lint.json"],
+      "inputs": [
+        "kac.config.json",
+        "kan.config.json",
+        "compound.config.yaml",
+        "kanban/**/*",
+        "docs/**/*"
+      ]
+    }
+  }
+}
+```
+
+Then add a corresponding package script in the host root `package.json`:
+
+```json
+"kanban-lint": "kan lint --json > .kan/lint.json"
+```
+
+Run with `turbo run kanban-lint` when you want Turborepo-native orchestration.

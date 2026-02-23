@@ -1,0 +1,15 @@
+name: ddd-bounded-contexts
+version: 1
+description: >
+  Seed model for bounded context plugins. Populate `contexts` to route work
+  to context-owned agents and to keep ownership checks explicit.
+contexts:
+  - name: default
+    paths:
+      - apps
+      - packages
+      - docs
+rules:
+  requireScopeClaim: true
+  maxConcurrentPerContext: 1
+  allowCrossContextDependencies: true

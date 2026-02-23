@@ -1,0 +1,9 @@
+{
+  "name": "compound-engineering",
+  "version": "0.1.0",
+  "title": "Compound Engineering Plugin",
+  "description": "Adds the run-loop stages for Plan, Work, Review, and Compound.",
+  "commands": [
+    "loop"
+  ]
+}

@@ -1,0 +1,17 @@
+name: Kanban Agent Scope Guard
+
+on:
+  pull_request:
+
+jobs:
+  kan-agent-guard:
+    name: Enforce workspace claims
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: npm install
+      - name: Enforce agent scope guard
+        env:
+          KAN_AGENT_ID: github-actions
+        run: npx kan agent guard --agent github-actions --json

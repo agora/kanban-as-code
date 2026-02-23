@@ -1,0 +1,54 @@
+{
+  "generatedAt": "2026-02-23T06:18:32.447Z",
+  "documents": 0,
+  "collections": {},
+  "success": true,
+  "warnings": [
+    {
+      "severity": "warning",
+      "file": "kanban/architecture-reference.md",
+      "ruleId": "collection/missing",
+      "message": "Collection folder missing: kanban/architecture-reference.md",
+      "suggestedNext": [
+        "Create the missing collection path and add expected documents."
+      ]
+    },
+    {
+      "severity": "warning",
+      "file": "kanban/Strategy-Current.md",
+      "ruleId": "collection/missing",
+      "message": "Collection folder missing: kanban/Strategy-Current.md",
+      "suggestedNext": [
+        "Create the missing collection path and add expected documents."
+      ]
+    },
+    {
+      "severity": "warning",
+      "file": "kanban/strategic-execution-spec.md",
+      "ruleId": "collection/missing",
+      "message": "Collection folder missing: kanban/strategic-execution-spec.md",
+      "suggestedNext": [
+        "Create the missing collection path and add expected documents."
+      ]
+    },
+    {
+      "severity": "warning",
+      "file": "kanban/roadmap/initiatives",
+      "ruleId": "collection/missing",
+      "message": "Collection folder missing: kanban/roadmap/initiatives",
+      "suggestedNext": [
+        "Create the missing collection path and add expected documents."
+      ]
+    },
+    {
+      "severity": "warning",
+      "file": "docs/README.md",
+      "ruleId": "collection/missing",
+      "message": "Collection folder missing: docs/README.md",
+      "suggestedNext": [
+        "Create the missing collection path and add expected documents."
+      ]
+    }
+  ],
+  "errors": []
+}

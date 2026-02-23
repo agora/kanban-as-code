@@ -1,0 +1,20 @@
+schema: https://kanban-as-code.dev/schema/compound-config.json
+version: 1
+generatedBy: kanban-as-code
+autopilot:
+  enabled: true
+  onMerge: true
+  workflow: .github/workflows/kan-compound-autopilot.yml
+  scope: kanban
+  requiredPlugin: compound-engineering
+workspaces:
+  docsIndex: docs/README.md
+  compounds: docs/compounds
+  systemPrompts: docs/brainstorms
+  knowledgeBase: docs
+loops:
+  autopilotMode: compound
+  enforce:
+    - agent-workspace
+    - query-guards
+    - release-checks

@@ -1,0 +1,7 @@
+{
+  "name": "ddd-bounded-contexts",
+  "version": "0.1.0",
+  "title": "DDD Bounded Contexts",
+  "description": "Declares domain boundaries and context ownership boundaries for parallel agent work.",
+  "commands": []
+}

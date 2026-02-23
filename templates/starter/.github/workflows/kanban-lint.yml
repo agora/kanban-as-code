@@ -1,0 +1,32 @@
+name: Kanban Lint
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  kanban-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies
+        run: npm install
+      - name: Run kanban lint
+        run: |
+          if command -v turbo >/dev/null 2>&1 && [ -f turbo.json ]; then
+            npx turbo run kanban-lint || npx kan lint --json > .kan/lint.json
+          else
+            npx kan lint --json > .kan/lint.json
+          fi
+      - name: Enforce agent scope guard on pull requests
+        if: github.event_name == 'pull_request'
+        env:
+          KAN_AGENT_ID: github-actions
+        run: npx kan agent guard --agent github-actions --json
+      - name: Upload lint report
+        uses: actions/upload-artifact@v4
+        with:
+          name: kanban-lint
+          path: .kan/lint.json
