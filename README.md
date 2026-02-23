@@ -5,8 +5,6 @@
 [![Stars](https://img.shields.io/github/stars/agora/kanban-as-code?style=social)](https://github.com/agora/kanban-as-code/stargazers)
 [![Open Issues](https://img.shields.io/github/issues/agora/kanban-as-code)](https://github.com/agora/kanban-as-code/issues)
 
-## One-liner
-
 **Kanban-as-Code is a git-native execution framework that turns planning into versioned, machine-validated markdown so teams can coordinate strategy, scope, and delivery from a single source of truth.**
 
 ## Introduction
@@ -104,6 +102,24 @@ Read at least these fields before touching state:
 
 If `context.config.isHealthy` is false or a config error exists, resolve that first before `evolve`, `mv`, `rm`, or scope-changing work.
 
+## Future work and technical debt (machine ledger)
+
+The canonical roadmap for implemented improvements is now machine-readable:
+
+- `future-ledger.json`
+- `future-ledger.schema.json`
+- `src/future-notes.js` (compat wrapper + source import path)
+
+`future-ledger.json` is the canonical ledger for triage (diff-safe, machine-parseable, and strict to schema).
+
+Machine-readable outputs:
+
+```bash
+node scripts/validate-future-ledger.mjs --json --triage
+```
+
+This prints structured validation + triage fields for automation.
+
 ## Design in one page
 
 - `kanban/` is the execution planning plane; durable artifacts are:
@@ -174,3 +190,7 @@ Then add a corresponding package script in the host root `package.json`:
 ```
 
 Run with `turbo run kanban-lint` when you want Turborepo-native orchestration.
+
+Author:
+Gudjon Mar Gudjonsson
+[ Agora & OZ & Alendis ]
