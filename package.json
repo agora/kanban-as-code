@@ -9,7 +9,9 @@
   },
   "scripts": {
     "start": "node bin/kan.js",
-    "lint": "node bin/kan.js lint"
+    "lint": "node bin/kan.js lint",
+    "ledger:validate": "node scripts/validate-future-ledger.mjs --json",
+    "ledger:triage": "node scripts/validate-future-ledger.mjs --json --triage"
   },
   "dependencies": {
     "commander": "^12.1.0",

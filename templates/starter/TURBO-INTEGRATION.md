@@ -24,7 +24,6 @@ If you do want Turborepo-native orchestration, use this minimal option:
     "kanban-lint": {
       "outputs": [".kan/lint.json"],
       "inputs": [
-        "kac.config.json",
         "kan.config.json",
         "compound.config.yaml",
         "kanban/**/*",

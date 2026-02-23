@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kanban-as-code.dev/schemas/future-ledger.schema.json",
+  "title": "Kan Future Ledger",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "generatedAt", "metadata", "items"],
+  "properties": {
+    "schemaVersion": {
+      "type": "string",
+      "enum": ["1.0.0"]
+    },
+    "generatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "updatedBy", "createdBy", "generatedWith"],
+      "properties": {
+        "source": {
+          "type": "string",
+          "minLength": 1
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "createdBy": {
+          "type": "string",
+          "minLength": 1
+        },
+        "generatedWith": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/ledgerItem" }
+    }
+  },
+  "$defs": {
+    "ledgerItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "title",
+        "status",
+        "priority",
+        "impact",
+        "complexity",
+        "owner",
+        "risk",
+        "fileHints",
+        "source",
+        "dependsOn",
+        "rationale",
+        "acceptanceCriteria",
+        "createdAt",
+        "updatedAt",
+        "nextActions",
+        "estimatedEffort"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 5,
+          "pattern": "^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["future", "technicalDebt"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 5
+        },
+        "status": {
+          "type": "string",
+          "enum": ["open", "in_progress", "blocked", "done", "wont_fix", "deferred"]
+        },
+        "priority": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low"]
+        },
+        "impact": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low", "unknown"]
+        },
+        "complexity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low", "unknown"]
+        },
+        "owner": {
+          "type": "string",
+          "minLength": 3
+        },
+        "risk": {
+          "type": "string",
+          "enum": ["data-correctness", "safety", "performance", "operations", "maintainability", "unknown"]
+        },
+        "fileHints": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 3
+          }
+        },
+        "dependsOn": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$"
+          },
+          "uniqueItems": true
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 5
+        },
+        "goal": {
+          "type": "string",
+          "minLength": 5
+        },
+        "acceptanceCriteria": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 10
+          },
+          "minItems": 1
+        },
+        "symptoms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 5
+          }
+        },
+        "estimatedImpact": {
+          "type": "string",
+          "minLength": 5
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low"]
+        },
+        "mitigation": {
+          "type": "string",
+          "minLength": 5
+        },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["path", "anchor", "commit"],
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1
+            },
+            "anchor": {
+              "type": "string",
+              "minLength": 1
+            },
+            "commit": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+          },
+        "nextActions": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 5
+          },
+          "minItems": 1
+        },
+        "estimatedEffort": {
+          "type": "string",
+          "enum": ["tiny", "small", "medium", "large"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "tags": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 2
+          },
+          "minItems": 1
+        }
+      }
+    }
+  }
+}

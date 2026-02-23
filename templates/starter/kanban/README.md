@@ -21,12 +21,16 @@ Everything under `kanban/` is expected to be execution planning data.
 - `kan agent guard` before commit to detect conflicting local changes.
 - `kan agent unclaim --agent <name> --all` at handoff.
 - `parallel-agent-runbook.md` for the practical lock-and-edit procedure.
+- `backlog-grooming.md` for a lightweight pre-work triage checklist.
 - `docs/brainstorms/` for compounding memories and prompt evolution.
 - `docs/compounds/` for machine-readable loop artifacts.
 - `kan plugin install compound-engineering` to enable the loop stages.
 - `kan plugin install ddd-bounded-contexts` to install the starter DDD boundary scaffold.
 - `kan loop --stage plan`, `kan loop --stage work`, `kan loop --stage review`, `kan loop --stage compound` for the 4-stage loop.
 - `kan loop --stage compound --auto` for structured autonomous compounding.
+- `kan status`, `kan queue`, `kan next` for loop-ready backlog planning.
+- `kan backlog summary`, `kan backlog set`, `kan backlog move` for execution-safe planning operations.
+- `kan assess` for a compact PASS/WARN/FAIL assessment.
 
 ## Repository portability
 

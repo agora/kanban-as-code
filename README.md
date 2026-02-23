@@ -36,6 +36,15 @@ PR workflow for the `kanban-as-code` project:
 4. Run `kan lint --json` for planning-plane validation.
 5. Open a PR with a short summary of intent and validation notes.
 
+## Reporting bugs
+
+If you find a bug, please submit it to the GitHub repo:
+
+- open an issue: https://github.com/agora/kanban-as-code/issues
+- open a pull request with a focused fix: https://github.com/agora/kanban-as-code/pulls
+
+You can use Claude Code, Codex, or other AI coding tools to help with fixes, but please keep PRs small, include validation output, and link to the related issue when possible.
+
 ## Usage
 
 ### Install and initialize
@@ -58,17 +67,64 @@ kan init --skeleton
 ```bash
 kan lint
 kan start --json
+kan status
+kan queue
+kan next
+kan backlog summary --scope kanban/roadmap/initiatives
+kan backlog set in-progress <task-id>
+kan backlog move kanban/roadmap/initiatives/foo.md docs/archive/foo.md
+kan assess
+kan docs:index --out .kan/docs-index.json
+kan update --dry-run
+kan update
 kan build
+kan update --force
 kan health
+kan query '.[] | select(.status == "in-progress") | .id'
+kan query '.[] | sort_by(.status) | .[0:3]'
 kan agent init
 kan agent worktree <agent-name> --branch <branch>
 kan agent claim --scope <path> --agent <name>
-kan query '.[] | select(.status == "in-progress") | .id'
-kan query '.[] | sort_by(.status) | .[0:3]'
 kan evolve initiatives/my-doc-id --to review
 kan mv kanban/roadmap/initiatives/foo.md docs/archive/foo.md
 kan rm kanban/roadmap/initiatives/old.md --dry-run
+kan grooming --scope kanban/roadmap/initiatives --type initiative
 ```
+
+### Update deployed repos (one-command flow)
+
+If your repo already uses `kanban-as-code`, keep it in sync with template/tool updates:
+
+```bash
+kan update --dry-run
+kan update --force
+```
+
+This is the release update flow for injected deployments:
+
+1. upgrade the `kanban-as-code` source in your environment (or pull the latest starter release),
+2. run one command in each downstream repo: `kan update --force`,
+3. run `kan lint --json` and address any generated conflicts.
+
+### Release cadence from this repository
+
+Keep upgrades predictable by using Git tags/releases from:
+
+- https://github.com/agora/kanban-as-code/releases
+- https://github.com/agora/kanban-as-code/tags
+
+Simple fixed cadence flow:
+
+1. Choose a target release/tag in this repository.
+2. Update your local `kanban-as-code` checkout or package to that tag.
+3. Run `kan update --force` in each deployed repo.
+4. Run `kan lint --json` and resolve conflicts.
+
+This makes updates deterministic: every repo is synced to a known upstream tag/release rather than ad-hoc snapshots.
+
+- `kan update` applies new files from the template and skips existing conflicts.
+- `kan update --force` also overwrites starter files so local edits are intentionally refreshed.
+- `kan update --json` returns machine-readable change summaries for scripts/CI.
 
 `kan` supports JSON output with `--json` for machine/agent flows.
 `kan` also provides optional multi-agent commands:
@@ -76,6 +132,11 @@ kan rm kanban/roadmap/initiatives/old.md --dry-run
 - `kan agent claim` (claim via target task or explicit scope)
 - `kan agent init` (bootstrap local worktree helper and, for non-starter repos, generate a PR agent-guard workflow)
 - `kan agent worktree` (provision a dedicated agent worktree)
+- `kan grooming` / `kan backlog:groom` (run backlog triage before execution)
+- `kan status` / `kan queue` / `kan next` / `kan backlog summary` (execution-readiness plane)
+- `kan backlog set` / `kan backlog move` (status updates and scoped movement with lock checks)
+- `kan assess` (machine-readable PASS/WARN/FAIL planning health)
+- `kan docs:index` (generate docs payload for planning and agents)
 - `kan plugin list` / `kan plugin install <name>`
 - `kan loop --stage plan`, `kan loop --stage work`, `kan loop --stage review`, `kan loop --stage compound`
 - `kan loop --stage compound --auto --scope kanban` for autonomous post-merge compounding mode
@@ -172,7 +233,6 @@ Example:
     "kanban-lint": {
       "outputs": [".kan/lint.json"],
       "inputs": [
-        "kac.config.json",
         "kan.config.json",
         "compound.config.yaml",
         "kanban/**/*",

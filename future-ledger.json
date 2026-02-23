@@ -1,0 +1,211 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedAt": "2026-02-23T10:45:00.000Z",
+  "metadata": {
+    "source": "src/future-notes.js",
+    "updatedBy": "kan maintainer",
+    "createdBy": "kan maintainer",
+    "generatedWith": "manual normalization pass",
+    "notes": "Single-source machine ledger for future work and technical debt triage."
+  },
+  "items": [
+    {
+      "id": "cli/query-parser-upgrade",
+      "kind": "future",
+      "title": "Improve jq-like query parser coverage",
+      "status": "open",
+      "priority": "high",
+      "impact": "high",
+      "complexity": "low",
+      "owner": "next-cycle",
+      "risk": "data-correctness",
+      "fileHints": ["src/cli.js", "src/future-notes.js"],
+      "dependsOn": [],
+      "rationale": "The current parser is intentionally small; richer operator support is needed for large planning corpora and less workaround logic.",
+      "goal": "Replace the regex/token-split implementation with a proper query parser that validates supported jq-like operators strictly.",
+      "acceptanceCriteria": [
+        "Preserve behavior for currently supported query operators.",
+        "Add support for nested array slicing and grouped filter expressions.",
+        "Emit actionable, classified errors for unsupported operator combinations.",
+        "Keep query failures single-attempt and explicit with recovery hints."
+      ],
+      "estimatedImpact": "reduce plan-to-execution friction across repositories and reduce agent-level query retries",
+      "severity": "medium",
+      "symptoms": [
+        "Manual query rewrites for unsupported nested syntax.",
+        "Higher chance of workaround scripts that alter planner input."
+      ],
+      "source": {
+        "path": "src/cli.js",
+        "anchor": "parseQueryPath, executeQuery",
+        "commit": "pending"
+      },
+      "nextActions": [
+        "Implement parser module tests for edge cases.",
+        "Add operator coverage matrix to start and loop documentation."
+      ],
+      "estimatedEffort": "medium",
+      "createdAt": "2026-02-23T10:45:00.000Z",
+      "updatedAt": "2026-02-23T10:45:00.000Z",
+      "tags": ["query", "agent", "compiler"]
+    },
+    {
+      "id": "cli/agent-identity-normalization",
+      "kind": "future",
+      "title": "Normalize agent identity resolution",
+      "status": "open",
+      "priority": "medium",
+      "impact": "medium",
+      "complexity": "low",
+      "owner": "platform",
+      "risk": "safety",
+      "fileHints": ["src/cli.js", "src/future-notes.js"],
+      "dependsOn": [],
+      "rationale": "Agent identity is currently derived from multiple env vars in multiple places, increasing inconsistency risk in parallel workflows.",
+      "goal": "Use one canonical `KAN_AGENT_ID` source, with explicit fallback and clear recovery errors.",
+      "acceptanceCriteria": [
+        "All agent-bound commands share one resolver helper.",
+        "CLI emits classified errors when identity cannot be resolved.",
+        "Telemetry includes resolver decision path for auditability."
+      ],
+      "estimatedImpact": "improve claim/guard determinism across concurrent sessions",
+      "severity": "medium",
+      "symptoms": [
+        "Mixed environment assumptions across `agent claim`, `agent worktree`, and `agent guard`.",
+        "Conflicting claims created with implicit fallback mismatches."
+      ],
+      "source": {
+        "path": "src/cli.js",
+        "anchor": "resolveTaskAgentWorkspace, runAgentsWorktree, runAgentClaim",
+        "commit": "pending"
+      },
+      "nextActions": [
+        "Add shared `resolveActiveAgentId` helper.",
+        "Add classified diagnostics with recommendation for `KAN_AGENT_ID`."
+      ],
+      "estimatedEffort": "small",
+      "createdAt": "2026-02-23T10:45:00.000Z",
+      "updatedAt": "2026-02-23T10:45:00.000Z",
+      "tags": ["agent", "auth", "workflow"]
+    },
+    {
+      "id": "cli/scope-config-caching",
+      "kind": "future",
+      "title": "Add command-scope cache for config and plugin reads",
+      "status": "open",
+      "priority": "medium",
+      "impact": "medium",
+      "complexity": "low",
+      "owner": "performance",
+      "risk": "performance",
+      "fileHints": ["src/cli.js", "src/future-notes.js"],
+      "dependsOn": [],
+      "rationale": "Configuration and plugin state are reloaded multiple times in loop-like flows and repeated operations.",
+      "goal": "Cache loaded runtime state for a single command invocation while preserving single-attempt failure behavior.",
+      "acceptanceCriteria": [
+        "One execution context shared across loop stages when possible.",
+        "No change to fail-fast behavior.",
+        "CI duration decreases in repeated stage scenarios."
+      ],
+      "estimatedImpact": "faster execution and lower I/O for CI and automation runs",
+      "severity": "low",
+      "symptoms": [
+        "Repeated config and plugin load calls in the same command sequence.",
+        "Unnecessary filesystem churn under compound execution."
+      ],
+      "source": {
+        "path": "src/cli.js",
+        "anchor": "runWorkflowLoop, runWorkflowArtifact",
+        "commit": "pending"
+      },
+      "nextActions": [
+        "Introduce command context object.",
+        "Profile before/after run times in representative repositories."
+      ],
+      "estimatedEffort": "small",
+      "createdAt": "2026-02-23T10:45:00.000Z",
+      "updatedAt": "2026-02-23T10:45:00.000Z",
+      "tags": ["cache", "performance", "automation"]
+    },
+    {
+      "id": "cli/skeleton-root-file-bootstrap",
+      "kind": "technicalDebt",
+      "title": "High-friction defaults in --skeleton root files",
+      "status": "open",
+      "priority": "medium",
+      "impact": "medium",
+      "complexity": "low",
+      "owner": "product",
+      "risk": "maintainability",
+      "fileHints": ["src/cli.js", "src/future-notes.js"],
+      "dependsOn": ["cli/worktree-shelling"],
+      "rationale": "Skeleton initialization currently emits fixed root files in one opinionated structure.",
+      "goal": "Decouple bootstrap seeds from hard-coded content and support repo-level policy overlays.",
+      "acceptanceCriteria": [
+        "Template-driven bootstrap manifest for skeleton mode.",
+        "Zero required local edits for enterprise-specific policy defaults.",
+        "Migration path documented for existing repos."
+      ],
+      "estimatedImpact": "reduce template drift and rerender churn across projects",
+      "symptoms": [
+        "Strategy files must be manually updated after template evolution.",
+        "Non-uniform policy adaptation requires code edits."
+      ],
+      "severity": "medium",
+      "mitigation": "Move defaults to manifest-driven skeleton profile and keep this mode deterministic.",
+      "source": {
+        "path": "src/cli.js",
+        "anchor": "initializeSkeletonWorkspace, runInit",
+        "commit": "pending"
+      },
+      "nextActions": [
+        "Introduce manifest schema for skeleton profiles.",
+        "Add per-repo override path for policy seeds."
+      ],
+      "estimatedEffort": "medium",
+      "createdAt": "2026-02-23T10:45:00.000Z",
+      "updatedAt": "2026-02-23T10:45:00.000Z",
+      "tags": ["schema", "bootstrap", "template"]
+    },
+    {
+      "id": "cli/worktree-shelling",
+      "kind": "technicalDebt",
+      "title": "External command usage without adapter abstraction",
+      "status": "open",
+      "priority": "low",
+      "impact": "medium",
+      "complexity": "low",
+      "owner": "infra",
+      "risk": "operations",
+      "fileHints": ["src/cli.js", "src/future-notes.js"],
+      "dependsOn": [],
+      "rationale": "Git and shell calls are inlined directly in command handlers, reducing testability and recovery consistency.",
+      "goal": "Extract command execution into a narrow adapter interface used by all git/worktree flows.",
+      "acceptanceCriteria": [
+        "Command execution has one reusable adapter with timeout and classified error wrapping.",
+        "Recovery recommendations include explicit next-step hints.",
+        "Existing behavior remains single-attempt and fail-fast."
+      ],
+      "estimatedImpact": "harder-to-test command paths become deterministic and easier to reason about",
+      "symptoms": [
+        "Mixed sync/throw branches around command outputs.",
+        "Uneven error contexts across git-related flows."
+      ],
+      "severity": "medium",
+      "mitigation": "Introduce `executeCommand` adapter and shared shell policy.",
+      "source": {
+        "path": "src/cli.js",
+        "anchor": "runAgentsWorktree, runAgentGuard",
+        "commit": "pending"
+      },
+      "nextActions": [
+        "Add a command runner boundary with typed result schema.",
+        "Route all command calls through boundary in one transaction."
+      ],
+      "estimatedEffort": "small",
+      "createdAt": "2026-02-23T10:45:00.000Z",
+      "updatedAt": "2026-02-23T10:45:00.000Z",
+      "tags": ["shell", "architecture", "operations"]
+    }
+  ]
+}

@@ -38,6 +38,10 @@ Agent tasks in Plan:
 
 Use `kan query` and `kan lint --json` to locate the authoritative targets.
 
+Before handing work to agents, run a quick grooming sweep:
+
+- `kan grooming --scope kanban`
+
 ## 2) Work
 
 Goal: execute in isolated, non-overlapping scopes.

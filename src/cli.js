@@ -169,6 +169,13 @@ const START_CAPABILITIES = [
     next: ['kan agent init', 'kan lint'],
   },
   {
+    id: 'update',
+    category: 'maintenance',
+    command: 'kan update',
+    description: 'Refresh starter files from the current CLI/template release.',
+    next: ['kan update --force', 'kan lint --json'],
+  },
+  {
     id: 'start',
     category: 'orchestration',
     command: 'kan start --json',
@@ -197,6 +204,27 @@ const START_CAPABILITIES = [
     next: ['kan lint', 'kan build'],
   },
   {
+    id: 'status',
+    category: 'observability',
+    command: 'kan status',
+    description: 'Summarize type/collection/status balances and top at-risk docs.',
+    next: ['kan queue', 'kan assess'],
+  },
+  {
+    id: 'queue',
+    category: 'workflow',
+    command: 'kan queue',
+    description: 'Produce an execution queue ranked by risk and actionability.',
+    next: ['kan next', 'kan status'],
+  },
+  {
+    id: 'next',
+    category: 'workflow',
+    command: 'kan next',
+    description: 'Select the highest-priority ready-to-execute backlog item.',
+    next: ['kan queue', 'kan assess'],
+  },
+  {
     id: 'query',
     category: 'query',
     command: 'kan query',
@@ -223,6 +251,34 @@ const START_CAPABILITIES = [
     command: 'kan rm <target>',
     description: 'Archive by default or delete with --hard.',
     next: ['kan evolve <id>', 'kan lint'],
+  },
+  {
+    id: 'backlog',
+    category: 'workflow',
+    command: 'kan backlog set|move|summary',
+    description: 'Run backlog-aware workflow commands for next item and movement.',
+    next: ['kan queue', 'kan backlog set <status> <id>', 'kan backlog move <source> <dest>'],
+  },
+  {
+    id: 'grooming',
+    category: 'workflow',
+    command: 'kan grooming',
+    description: 'Run backlog grooming and triage diagnostics.',
+    next: ['kan evolve <id>', 'kan agent claim --scope <scope>'],
+  },
+  {
+    id: 'assess',
+    category: 'observability',
+    command: 'kan assess',
+    description: 'Emit a concise PASS/WARN/FAIL readiness assessment with actionable fixes.',
+    next: ['kan lint --json', 'kan next'],
+  },
+  {
+    id: 'docs:index',
+    category: 'knowledge',
+    command: 'kan docs:index',
+    description: 'Generate a searchable docs index payload for planning and agents.',
+    next: ['kan docs:index --out .kan/docs-index.json', 'kan query .[] | select(.type == "initiative")'],
   },
   {
     id: 'agent',
@@ -309,6 +365,43 @@ function collectArg(value, previous = []) {
 
 function normalizePath(pathInput) {
   return String(pathInput || '').replace(/\\/g, '/').replace(/\/+$/, '');
+}
+
+function parsePositiveInt(value, fallback, field = 'value') {
+  const text = String(value || '').trim();
+  if (!text) {
+    return fallback;
+  }
+  const parsed = Number.parseInt(text, 10);
+  if (Number.isNaN(parsed) || parsed <= 0) {
+    throw new ClassifiedError({
+      code: 'groom/invalid-limit',
+      message: `Invalid ${field}: ${text}. Expected a positive integer.`,
+      field,
+      context: { raw: text },
+      suggestedNext: ['Use a positive integer like --limit 25.'],
+    });
+  }
+  return parsed;
+}
+
+function normalizeGroomScope(cwd, scopeInput) {
+  const raw = String(scopeInput || '').trim();
+  if (!raw || raw === '.') {
+    return '';
+  }
+  const absolute = path.resolve(cwd, raw);
+  const relative = normalizePath(path.relative(cwd, absolute));
+  if (relative.startsWith('..') || path.isAbsolute(relative)) {
+    throw new ClassifiedError({
+      code: 'groom/scope-outside-repo',
+      message: `groom scope must be within this repository: ${raw}`,
+      field: 'scope',
+      context: { scope: raw },
+      suggestedNext: ['Use a scope inside the repo, such as kanban/ or docs/.'],
+    });
+  }
+  return relative;
 }
 
 function slugify(value = '') {
@@ -1213,9 +1306,34 @@ function suggestedNextForIssue(ruleId, context = {}) {
         'Verify document fields exist before projecting: `.[] | select(.status) | .id`.',
         'Run without `--json` first to inspect result shape quickly.',
       ];
+    case 'status/cmd-failure':
+      return [
+        'Run `kan status --json` after any config/schema changes are fixed.',
+        'Create a valid kanban config with `kan init --force` if needed.',
+      ];
+    case 'queue/cmd-failure':
+      return [
+        'Run `kan status --json` to inspect blocked or stale documents first.',
+        'Narrow queue execution with explicit `--scope`, `--type`, or `--status` filters.',
+      ];
+    case 'next/cmd-failure':
+      return [
+        'Run `kan queue` to refresh readiness filters before selecting an item.',
+        'If blocking issues persist, run `kan assess` and address warnings.',
+      ];
+    case 'assess/cmd-failure':
+      return [
+        'Run `kan lint --json` to identify and fix validation failures.',
+        'Re-run `kan assess` after errors are resolved.',
+      ];
+    case 'docs/index-failure':
+      return [
+        'Run `kan lint --json` and fix all schema/config errors.',
+        'Verify `kan.config.json` collection and docsRoot paths.',
+      ];
     default:
       return [];
-  }
+    }
 }
 
 function suggestedNextForClaimConflict(conflict) {
@@ -1502,6 +1620,116 @@ async function assertNoCopyConflicts(source, target) {
   }
 }
 
+async function readStarterTemplateMarker(cwd) {
+  const markerPath = path.join(cwd, STARTER_MARKER_PATH);
+  const exists = await fileExists(markerPath);
+  if (!exists) {
+    return null;
+  }
+  let marker;
+  try {
+    marker = JSON.parse(await fs.readFile(markerPath, 'utf8'));
+  } catch (error) {
+    throw new ClassifiedError({
+      code: 'starter-marker/parse',
+      message: `Unable to parse starter marker ${markerPath}.`,
+      field: markerPath,
+      context: { reason: error.message },
+      suggestedNext: [
+        `Fix or recreate ${markerPath} from a fresh kan update run.`,
+        'Re-run `kan init --force` if the marker file is missing unexpectedly.',
+      ],
+    });
+  }
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker)) {
+    throw new ClassifiedError({
+      code: 'starter-marker/format',
+      message: `Starter marker file has invalid shape: ${markerPath}.`,
+      field: markerPath,
+      context: { value: marker },
+      suggestedNext: ['Replace the marker file with a valid JSON object and rerun.'],
+    });
+  }
+  return {
+    ...marker,
+    path: markerPath,
+  };
+}
+
+async function writeStarterTemplateMarker(cwd, marker) {
+  const markerPath = path.join(cwd, STARTER_MARKER_PATH);
+  const now = new Date().toISOString();
+  const normalized = {
+    source: String(marker?.source || 'kan update'),
+    template: String(marker?.template || 'starter'),
+    initializedAt: String(marker?.initializedAt || now),
+    packageVersion: version,
+    updatedAt: now,
+  };
+  await fs.mkdir(path.dirname(markerPath), { recursive: true });
+  await fs.writeFile(markerPath, JSON.stringify(normalized, null, 2), 'utf8');
+}
+
+async function syncTemplateFilesFromSource(sourceDir, targetDir, { force = false, dryRun = false, cwd = process.cwd() } = {}) {
+  const summary = {
+    added: [],
+    updated: [],
+    skipped: [],
+    unchanged: [],
+  };
+
+  const visit = async (sourcePath, targetPath) => {
+    const entries = await fs.readdir(sourcePath, { withFileTypes: true });
+    for (const entry of entries) {
+      const nextSource = path.join(sourcePath, entry.name);
+      const nextTarget = path.join(targetPath, entry.name);
+      if (entry.isDirectory()) {
+        await fs.mkdir(nextTarget, { recursive: true });
+        await visit(nextSource, nextTarget);
+        continue;
+      }
+
+      const targetExists = await fileExists(nextTarget);
+      const relativePath = toRelative(cwd, nextTarget);
+
+      if (targetExists && !force) {
+        summary.skipped.push(relativePath);
+        continue;
+      }
+
+      const sourceBytes = await fs.readFile(nextSource);
+      if (!dryRun && targetExists) {
+        const targetBytes = await fs.readFile(nextTarget);
+        if (sourceBytes.equals(targetBytes)) {
+          summary.unchanged.push(relativePath);
+          continue;
+        }
+        await fs.copyFile(nextSource, nextTarget);
+        summary.updated.push(relativePath);
+        continue;
+      }
+      if (dryRun && targetExists) {
+        const targetBytes = await fs.readFile(nextTarget);
+        if (sourceBytes.equals(targetBytes)) {
+          summary.unchanged.push(relativePath);
+        } else {
+          summary.updated.push(relativePath);
+        }
+        continue;
+      }
+
+      await fs.mkdir(path.dirname(nextTarget), { recursive: true });
+      if (!dryRun) {
+        await fs.copyFile(nextSource, nextTarget);
+      }
+      summary.added.push(relativePath);
+    }
+  };
+
+  await visit(sourceDir, targetDir);
+  return summary;
+}
+
 async function runInit({
   template = 'starter',
   root = '.',
@@ -1573,6 +1801,119 @@ async function runInit({
   );
 
   printLine(`Initialized kanban starter at ${cwd}`);
+}
+
+async function runUpdate({
+  template = 'starter',
+  root = '.',
+  force = false,
+  dryRun = false,
+  json = false,
+}) {
+  const cwd = path.resolve(root);
+  const templatePath = buildTemplatePath(template).base;
+  const templateConfigPath = path.join(templatePath, DEFAULT_CONFIG_NAME);
+  const markerPath = path.join(cwd, STARTER_MARKER_PATH);
+  const existingMarker = force ? await readStarterTemplateMarker(cwd).catch(() => null) : await readStarterTemplateMarker(cwd);
+
+  if (!(await fileExists(templatePath))) {
+    throw new ClassifiedError({
+      code: 'update/template-missing',
+      message: `Template not found: ${templatePath}.`,
+      field: templatePath,
+      suggestedNext: ['Run with a valid --template name from templates/.'],
+    });
+  }
+  if (!(await fileExists(templateConfigPath))) {
+    throw new ClassifiedError({
+      code: 'update/template-invalid',
+      message: `Template is missing required config file: ${templateConfigPath}.`,
+      field: templateConfigPath,
+      suggestedNext: ['Restore the starter template files from a clean source.'],
+    });
+  }
+  if (!existingMarker && !force) {
+    throw new ClassifiedError({
+      code: 'update/not-initialized',
+      message: `No starter marker found at ${markerPath}.`,
+      field: markerPath,
+      suggestedNext: [
+        'Run `kan update --force` to adopt the template marker in this repo.',
+        'Run `kan init --force` to initialize a fresh starter payload first.',
+      ],
+    });
+  }
+
+  const summary = await syncTemplateFilesFromSource(templatePath, cwd, { force, dryRun, cwd });
+  const previousVersion = existingMarker?.packageVersion || null;
+
+  if (!dryRun) {
+    await writeStarterTemplateMarker(cwd, {
+      source: existingMarker?.source || 'kan update',
+      template,
+      initializedAt: existingMarker?.initializedAt || new Date().toISOString(),
+    });
+  }
+
+  const payload = {
+    success: true,
+    command: 'kan update',
+    template,
+    version,
+    previousVersion,
+    target: cwd,
+    dryRun,
+    force,
+    summary,
+    suggestedNext: [],
+  };
+
+  if (payload.previousVersion && payload.previousVersion !== payload.version) {
+    payload.suggestedNext = [
+      'Run with --force when you want to overwrite local edits and apply every template change.',
+      'Run `kan lint --json` after update to verify repository health.',
+    ];
+  }
+
+  if (dryRun) {
+    payload.suggestedNext = [
+      ...(payload.suggestedNext.length ? payload.suggestedNext : []),
+      'Re-run without --dry-run to apply planned updates.',
+    ];
+  }
+
+  if (payload.summary.unchanged.length === 0 && payload.summary.added.length === 0 && payload.summary.updated.length === 0) {
+    payload.suggestedNext = payload.suggestedNext.length
+      ? payload.suggestedNext
+      : ['No template deltas were detected for this repo snapshot.'];
+  }
+
+  if (!json) {
+    if (!dryRun) {
+      printLine('Kanban update completed.');
+    } else {
+      printLine('Kanban update dry-run completed.');
+    }
+  }
+  if (!json) {
+    printLine(`- target: ${payload.target}`);
+    printLine(`- template: ${payload.template}`);
+    printLine(`- marker version: ${payload.previousVersion || 'unknown (adopt with --force)'}`);
+    printLine(`- target version: ${payload.version}`);
+    printLine(`- dry-run: ${dryRun ? 'yes' : 'no'}`);
+    printLine(`- force: ${force ? 'yes' : 'no'}`);
+    printLine(
+      `- changes: +${payload.summary.added.length} ~${payload.summary.updated.length} · same ${payload.summary.unchanged.length} · skipped ${payload.summary.skipped.length}`,
+    );
+    if (payload.suggestedNext.length > 0) {
+      printLine('Suggested next commands:');
+      for (const suggestion of payload.suggestedNext) {
+        printLine(`- ${suggestion}`);
+      }
+    }
+  }
+
+  return payload;
 }
 
 async function loadCollection(cwd, collectionName, collection, issues, parsedConfig) {
@@ -3785,6 +4126,852 @@ function calculateStale(days) {
   return now - days * 24 * 60 * 60 * 1000;
 }
 
+const BACKLOG_TERMINAL_STATUSES = new Set(['done', 'archived', 'cancelled', 'deferred']);
+
+function normalizeQueueScope(cwd, scopeInput) {
+  const raw = String(scopeInput || '').trim();
+  if (!raw || raw === '.') {
+    return '';
+  }
+  const absolute = path.resolve(cwd, raw);
+  const relative = normalizePath(path.relative(cwd, absolute));
+  if (relative === '.' || !relative || relative.startsWith('..')) {
+    throw new ClassifiedError({
+      code: 'queue/scope-outside-repo',
+      message: `Backlog scope must be inside the repository: ${raw}`,
+      field: 'scope',
+      context: { scope: raw },
+      suggestedNext: ['Use a scope such as kanban/ or docs/.'],
+    });
+  }
+  return relative;
+}
+
+function incrementCounter(map, key, value = 1) {
+  map.set(key, (map.get(key) || 0) + value);
+}
+
+function mapCounter(entries, getter) {
+  const result = new Map();
+  for (const entry of entries) {
+    incrementCounter(result, getter(entry));
+  }
+  return result;
+}
+
+function buildIssueBuckets(issues, cwd) {
+  const buckets = new Map();
+  const ensure = (filePath, issue) => {
+    const normalized = normalizePath(filePath);
+    if (!normalized) {
+      return;
+    }
+    const bucket = buckets.get(normalized) || {
+      errors: 0,
+      warnings: 0,
+      issues: [],
+    };
+    if (issue?.severity === 'error') {
+      bucket.errors += 1;
+    } else if (issue?.severity === 'warning') {
+      bucket.warnings += 1;
+    }
+    bucket.issues.push(issue);
+    buckets.set(normalized, bucket);
+  };
+
+  for (const issue of issues) {
+    if (!issue?.file) {
+      continue;
+    }
+    const raw = String(issue.file).trim();
+    if (!raw) {
+      continue;
+    }
+    ensure(raw, issue);
+    if (path.isAbsolute(raw)) {
+      ensure(toRelative(cwd, raw), issue);
+    }
+  }
+  return buckets;
+}
+
+function getIssueBucket(buckets, cwd, doc) {
+  const absolute = doc.file;
+  const relative = doc.rel;
+  return (
+    buckets.get(relative)
+    || buckets.get(absolute)
+    || buckets.get(toRelative(cwd, absolute))
+    || { errors: 0, warnings: 0, issues: [] }
+  );
+}
+
+function statusWeight(status) {
+  const weights = {
+    idea: 55,
+    analysis: 65,
+    ready: 75,
+    coding: 85,
+    review: 70,
+    testing: 65,
+    'ready-for-release': 70,
+    blocked: 95,
+    proposed: 35,
+    deferred: 10,
+    cancelled: 5,
+    archived: 0,
+    done: 0,
+    active: 65,
+    draft: 35,
+  };
+  return Number.isFinite(weights[status]) ? weights[status] : 20;
+}
+
+function isTerminalStatus(status) {
+  return BACKLOG_TERMINAL_STATUSES.has(status);
+}
+
+function buildBacklogQueue(cwd, config, docs, issues, options = {}) {
+  const staleSinceDays = Number.parseInt(options.staleDays, 10);
+  const staleDays = Number.isFinite(staleSinceDays) ? staleSinceDays : config.cleanup?.staleDays || 90;
+  const staleSince = calculateStale(staleDays);
+  const now = Date.now();
+  const scope = normalizeQueueScope(cwd, options.scope || '');
+  const selectedType = String(options.type || '').trim();
+  const selectedStatus = String(options.status || '').trim();
+  const selectedCollection = String(options.collection || '').trim();
+  const includeTerminal = Boolean(options.includeTerminal);
+  const limit = Number.parseInt(options.limit, 10);
+  const issueBuckets = buildIssueBuckets(issues, cwd);
+  const candidates = [];
+
+  for (const doc of docs) {
+    const rel = normalizePath(doc.rel);
+    const status = String(doc.data?.status || '').trim();
+    const type = String(doc.type || '').trim();
+
+    if (scope && !fileMatchesScope(rel, scope)) {
+      continue;
+    }
+    if (selectedType && type !== selectedType) {
+      continue;
+    }
+    if (selectedStatus && status !== selectedStatus) {
+      continue;
+    }
+    if (selectedCollection && doc.collection !== selectedCollection) {
+      continue;
+    }
+    if (!selectedStatus && !includeTerminal && status && isTerminalStatus(status)) {
+      continue;
+    }
+    if (!status) {
+      continue;
+    }
+
+    const docIssues = getIssueBucket(issueBuckets, cwd, doc);
+    const updated = doc.data?.lastUpdated ? Date.parse(doc.data.lastUpdated) : NaN;
+    const stale = Number.isNaN(updated) || updated < staleSince;
+    const staleDaysFromUpdate = Number.isNaN(updated) ? null : Math.floor((now - updated) / (24 * 60 * 60 * 1000));
+
+    let score = statusWeight(status);
+    const reasons = [];
+    if (docIssues.errors > 0) {
+      score += 40 * docIssues.errors;
+      reasons.push(`blocked by ${docIssues.errors} validation error(s)`);
+    }
+    if (docIssues.warnings > 0) {
+      score += 12 * docIssues.warnings;
+      reasons.push(`has ${docIssues.warnings} warning(s)`);
+    }
+    if (stale) {
+      score += 24;
+      reasons.push(`stale beyond ${staleDays}d`);
+    }
+    if (status === 'blocked' && !doc.data?.blocking_reason) {
+      reasons.push('blocked without blocking_reason');
+    }
+    if (doc.data?.priority_tier) {
+      if (doc.data.priority_tier === 'p0') {
+        score += 40;
+      } else if (doc.data.priority_tier === 'p1') {
+        score += 25;
+      } else if (doc.data.priority_tier === 'p2') {
+        score += 10;
+      }
+      reasons.push(`priority ${doc.data.priority_tier}`);
+    }
+
+    const progression = statusProgressionForType(config, type);
+    const suggestedNext = withStatusSuggestions(progression, status);
+    candidates.push({
+      id: doc.data?.id || null,
+      type,
+      collection: doc.collection,
+      status,
+      file: rel,
+      score,
+      staleDays: staleDaysFromUpdate,
+      isStale: stale,
+      errors: docIssues.errors,
+      warnings: docIssues.warnings,
+      reasons,
+      suggestedNext,
+    });
+  }
+
+  const sorted = candidates.sort((a, b) => {
+    if (b.score !== a.score) {
+      return b.score - a.score;
+    }
+    const statusCompare = b.status.localeCompare(a.status);
+    if (statusCompare !== 0) {
+      return statusCompare;
+    }
+    return a.file.localeCompare(b.file);
+  });
+
+  return {
+    staleSince,
+    staleDays,
+    scope: scope || null,
+    selectedType: selectedType || null,
+    selectedStatus: selectedStatus || null,
+    selectedCollection: selectedCollection || null,
+    candidates: Number.isFinite(limit) && limit > 0 ? sorted.slice(0, limit) : sorted,
+  };
+}
+
+function buildIssueSummary(issues, limit = 8) {
+  const next = [];
+  const seen = new Set();
+  for (const issue of issues) {
+    for (const suggestion of issue.suggestedNext || []) {
+      if (seen.has(suggestion)) {
+        continue;
+      }
+      next.push(suggestion);
+      seen.add(suggestion);
+      if (next.length >= limit) {
+        return next;
+      }
+    }
+  }
+  return next;
+}
+
+function buildHealthOverview(docs, issues, config) {
+  const split = splitIssues(issues);
+  const staleSinceDays = config.cleanup?.staleDays || 90;
+  const staleSince = calculateStale(staleSinceDays);
+  const byType = mapCounter(docs, (entry) => entry.type);
+  const byCollection = mapCounter(docs, (entry) => entry.collection);
+  const byStatus = mapCounter(docs, (entry) => String(entry.data?.status || ''));
+
+  let staleCount = 0;
+  for (const doc of docs) {
+    const updated = doc.data?.lastUpdated ? Date.parse(doc.data.lastUpdated) : NaN;
+    if (Number.isNaN(updated) || updated < staleSince) {
+      staleCount += 1;
+    }
+  }
+
+  return {
+    total: docs.length,
+    stale: staleCount,
+    staleSinceDays,
+    counts: {
+      byType: Object.fromEntries(byType),
+      byCollection: Object.fromEntries(byCollection),
+      byStatus: Object.fromEntries(byStatus),
+    },
+    blocked: byStatus.get('blocked') || 0,
+    inProgress: byStatus.get('in-progress') || 0,
+    errors: split.errors.length,
+    warnings: split.warnings.length,
+    suggestedNext: buildIssueSummary([...split.errors, ...split.warnings], 8),
+  };
+}
+
+async function runStatus(opts) {
+  const cwd = path.resolve(opts.cwd || '.');
+  const config = await readConfig(cwd, opts.config || DEFAULT_CONFIG_NAME);
+  const issues = [];
+  const docs = await loadAllDocs(cwd, config, opts, issues);
+  validateDocs(cwd, docs, issues);
+  const split = splitIssues(issues);
+  const health = buildHealthOverview(docs, issues, config);
+  const queuePayload = buildBacklogQueue(cwd, config, docs, issues, {
+    scope: opts.scope || '',
+    type: opts.type || '',
+    status: opts.status || '',
+    collection: opts.collection || '',
+    includeTerminal: false,
+    limit: opts.limit || 8,
+  });
+
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    success: split.errors.length === 0,
+    collections: Object.keys(config.collections),
+    ...health,
+    queued: queuePayload.candidates,
+    focus: {
+      scope: queuePayload.scope,
+      type: queuePayload.selectedType,
+      status: queuePayload.selectedStatus,
+      collection: queuePayload.selectedCollection,
+    },
+  };
+
+  if (opts.json) {
+    printJson(payload);
+    return payload.success ? 0 : 1;
+  }
+
+  printLine('\nKanban status');
+  printLine(`- documents: ${payload.total}`);
+  printLine(`- blocked: ${payload.blocked}`);
+  printLine(`- in-progress: ${payload.inProgress}`);
+  printLine(`- stale (${payload.staleSinceDays}d): ${payload.stale}`);
+  printLine(`- quality: ${payload.errors ? `${payload.errors} errors` : 'ok'}, ${payload.warnings} warnings`);
+  if (queuePayload.candidates.length > 0) {
+    printLine('Top risk items:');
+    for (const item of queuePayload.candidates.slice(0, 5)) {
+      printLine(`- ${item.id || item.file} [${item.status}] score=${item.score} :: ${item.reasons.join('; ')}`);
+    }
+  } else {
+    printLine('No active risk items in scope.');
+  }
+  if (payload.suggestedNext.length > 0) {
+    printLine('Suggested next commands:');
+    for (const suggestion of payload.suggestedNext) {
+      printLine(`- ${suggestion}`);
+    }
+  }
+  return payload.success ? 0 : 1;
+}
+
+async function runQueue(opts) {
+  const cwd = path.resolve(opts.cwd || '.');
+  const config = await readConfig(cwd, opts.config || DEFAULT_CONFIG_NAME);
+  const issues = [];
+  const docs = await loadAllDocs(cwd, config, opts, issues);
+  validateDocs(cwd, docs, issues);
+  const split = splitIssues(issues);
+  const limit = parsePositiveInt(opts.limit, 25, 'limit');
+
+  const payload = buildBacklogQueue(cwd, config, docs, issues, {
+    scope: opts.scope || '',
+    type: opts.type || '',
+    status: opts.status || '',
+    collection: opts.collection || '',
+    includeTerminal: Boolean(opts.includeTerminal),
+    limit,
+  });
+
+  const output = {
+    generatedAt: new Date().toISOString(),
+    success: split.errors.length === 0,
+    scanned: docs.length,
+    selectedScans: payload.candidates.length,
+    queueSize: payload.candidates.length,
+    scope: payload.scope,
+    focus: {
+      type: payload.selectedType,
+      status: payload.selectedStatus,
+      collection: payload.selectedCollection,
+    },
+    staleSinceDays: payload.staleDays,
+    queue: payload.candidates,
+    errors: split.errors,
+    warnings: split.warnings,
+    suggestedNext: buildIssueSummary([...split.errors, ...split.warnings], 6),
+  };
+
+  if (opts.json) {
+    printJson(output);
+    return output.success ? 0 : 1;
+  }
+
+  printLine('\nKanban backlog queue');
+  printLine(`- docs: ${output.selectedScans}`);
+  if (output.scope) {
+    printLine(`- scope: ${output.scope}`);
+  }
+  printLine(`- quality: ${output.errors.length} errors, ${output.warnings.length} warnings`);
+  if (output.queue.length === 0) {
+    printLine('No queued items match the current filters.');
+  } else {
+    for (const item of output.queue) {
+      const owner = '';
+      printLine(
+        `- [${item.score}] ${item.id || item.file} ${item.status} (${item.collection}/${item.type}) :: ${item.file}`
+          + (owner ? ` [owner:${owner}]` : ''),
+      );
+    }
+  }
+  if (output.suggestedNext.length > 0) {
+    printLine('Suggested next commands:');
+    for (const suggestion of output.suggestedNext) {
+      printLine(`- ${suggestion}`);
+    }
+  }
+  return output.success ? 0 : 1;
+}
+
+async function runNext(opts) {
+  const cwd = path.resolve(opts.cwd || '.');
+  const config = await readConfig(cwd, opts.config || DEFAULT_CONFIG_NAME);
+  const issues = [];
+  const docs = await loadAllDocs(cwd, config, opts, issues);
+  validateDocs(cwd, docs, issues);
+  const split = splitIssues(issues);
+  const queuePayload = buildBacklogQueue(cwd, config, docs, issues, {
+    scope: opts.scope || '',
+    type: opts.type || '',
+    status: opts.status || '',
+    collection: opts.collection || '',
+    includeTerminal: false,
+    limit: 1,
+  });
+
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    success: split.errors.length === 0,
+    next: queuePayload.candidates[0] || null,
+    errors: split.errors,
+    warnings: split.warnings,
+    suggestedNext: split.errors.length
+      ? buildIssueSummary(split.errors, 8)
+      : ['kan queue', 'kan assess'],
+  };
+
+  if (!payload.next) {
+    payload.suggestedNext = ['kan queue', 'kan assess'];
+  }
+
+  if (opts.json) {
+    printJson(payload);
+    return payload.success ? 0 : 1;
+  }
+
+  if (!payload.next) {
+    printLine('No executable next item found for the current queue filters.');
+  } else {
+    printLine(`Next item: ${payload.next.id || payload.next.file} [${payload.next.status}] score=${payload.next.score}`);
+    if (payload.next.reasons?.length > 0) {
+      printLine(`- reasons: ${payload.next.reasons.join('; ')}`);
+    }
+    if (payload.next.suggestedNext?.length > 0) {
+      printLine('Suggested next actions:');
+      for (const suggestion of payload.next.suggestedNext) {
+        printLine(`- ${suggestion}`);
+      }
+    }
+  }
+
+  return payload.success ? 0 : 1;
+}
+
+async function runBacklogSummary(opts) {
+  const cwd = path.resolve(opts.cwd || '.');
+  const config = await readConfig(cwd, opts.config || DEFAULT_CONFIG_NAME);
+  const issues = [];
+  const docs = await loadAllDocs(cwd, config, opts, issues);
+  validateDocs(cwd, docs, issues);
+  const split = splitIssues(issues);
+  const selected = {
+    scope: normalizeQueueScope(cwd, opts.scope || ''),
+    type: String(opts.type || '').trim(),
+    status: String(opts.status || '').trim(),
+    collection: String(opts.collection || '').trim(),
+  };
+
+  const scopedDocs = docs.filter((doc) => {
+    const rel = normalizePath(doc.rel);
+    if (selected.scope && !fileMatchesScope(rel, selected.scope)) {
+      return false;
+    }
+    if (selected.type && doc.type !== selected.type) {
+      return false;
+    }
+    if (selected.status && String(doc.data?.status || '').trim() !== selected.status) {
+      return false;
+    }
+    if (selected.collection && doc.collection !== selected.collection) {
+      return false;
+    }
+    return true;
+  });
+
+  const byType = mapCounter(scopedDocs, (entry) => entry.type);
+  const byCollection = mapCounter(scopedDocs, (entry) => entry.collection);
+  const byStatus = mapCounter(scopedDocs, (entry) => String(entry.data?.status || ''));
+  const staleSince = calculateStale(config.cleanup?.staleDays || 90);
+  const stale = scopedDocs.filter((doc) => {
+    const updated = doc.data?.lastUpdated ? Date.parse(doc.data.lastUpdated) : NaN;
+    return Number.isNaN(updated) || updated < staleSince;
+  }).length;
+
+  const queuePayload = buildBacklogQueue(cwd, config, scopedDocs, issues, {
+    scope: selected.scope || '',
+    includeTerminal: false,
+    limit: 8,
+  });
+
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    success: split.errors.length === 0,
+    scanned: docs.length,
+    selectedScans: scopedDocs.length,
+    focus: selected,
+    summary: {
+      byType: Object.fromEntries(byType),
+      byCollection: Object.fromEntries(byCollection),
+      byStatus: Object.fromEntries(byStatus),
+      stale,
+      staleSinceDays: config.cleanup?.staleDays || 90,
+      inProgress: byStatus.get('in-progress') || 0,
+      blocked: byStatus.get('blocked') || 0,
+    },
+    topRisk: queuePayload.candidates,
+    errors: split.errors,
+    warnings: split.warnings,
+    suggestedNext: buildIssueSummary([...split.errors, ...split.warnings], 8),
+  };
+
+  if (opts.json) {
+    printJson(payload);
+    return payload.success ? 0 : 1;
+  }
+
+  printLine('\nKanban backlog summary');
+  printLine(`- docs: ${payload.selectedScans}`);
+  if (selected.scope) {
+    printLine(`- scope: ${selected.scope}`);
+  }
+  printLine(`- summary by status: ${JSON.stringify(payload.summary.byStatus)}`);
+  printLine(`- stale (${payload.summary.staleSinceDays}d): ${payload.summary.stale}`);
+  if (payload.topRisk.length > 0) {
+    printLine('Top risk items:');
+    for (const entry of payload.topRisk.slice(0, 5)) {
+      printLine(`- ${entry.id || entry.file} [${entry.status}] score=${entry.score}`);
+    }
+  }
+  return payload.success ? 0 : 1;
+}
+
+async function runBacklogSet(opts) {
+  const cwd = path.resolve(opts.cwd || '.');
+  const config = await readConfig(cwd, opts.config || DEFAULT_CONFIG_NAME);
+  const issues = [];
+  const docs = await loadAllDocs(cwd, config, opts, issues);
+  validateDocs(cwd, docs, issues);
+
+  const target = resolveTargetBySelector(docs, opts.target, cwd);
+  if (!target.doc) {
+    throw new Error(`No managed document found for ${opts.target}`);
+  }
+
+  const requestedStatus = String(opts.status || '').trim();
+  if (!requestedStatus) {
+    throw new Error('backlog set requires a status value.');
+  }
+  const progression = statusProgressionForType(config, target.doc.type);
+  if (!progression.includes(requestedStatus)) {
+    throw new Error(`Invalid status '${requestedStatus}' for ${target.doc.type}. Available: ${progression.join(', ')}`);
+  }
+
+  const relativeSource = toRelative(cwd, target.source);
+  const conflict = await checkClaimConflictsForPaths(cwd, opts, [relativeSource], { requireAgent: true });
+  if (conflict && !opts.force) {
+    const payload = {
+      ...commandFailurePayload('Cannot set status due to scope conflict.', 'agent/claim-conflict', []),
+      ...conflict,
+      errors: conflict.errors,
+    };
+    if (opts.json) {
+      printJson(payload);
+      return 1;
+    }
+    printLine('[ERROR] Scope lock conflict prevents status update.');
+    for (const item of conflict.errors) {
+      printLine(`- ${item.message}`);
+      for (const suggestion of item.suggestedNext) {
+        printLine(`  - suggestedNext: ${suggestion}`);
+      }
+    }
+    return 1;
+  }
+
+  const payload = {
+    success: true,
+    id: target.doc.data.id,
+    file: relativeSource,
+    from: String(target.doc.data.status || ''),
+    to: requestedStatus,
+    dryRun: Boolean(opts.dryRun),
+  };
+
+  if (opts.dryRun) {
+    if (opts.json) {
+      printJson(payload);
+      return 0;
+    }
+    printLine(`Dry run: would set ${payload.id}: ${payload.from} -> ${payload.to}`);
+    return 0;
+  }
+
+  await writeDocumentFrontmatter(target.source, (data) => ({
+    ...data,
+    status: requestedStatus,
+    lastUpdated: new Date().toISOString(),
+  }));
+
+  if (opts.json) {
+    printJson(payload);
+    return 0;
+  }
+  printLine(`Updated ${payload.id} status: ${payload.from} -> ${payload.to}`);
+  return 0;
+}
+
+async function runBacklogMove(opts) {
+  const cwd = path.resolve(opts.cwd || '.');
+  const config = await readConfig(cwd, opts.config || DEFAULT_CONFIG_NAME);
+  const issues = [];
+  const docs = await loadAllDocs(cwd, config, opts, issues);
+  validateDocs(cwd, docs, issues);
+
+  const source = resolveTargetBySelector(docs, opts.source, cwd).source;
+  const destination = ensureRepoPath(cwd, opts.destination);
+  const from = toRelative(cwd, source);
+  const to = toRelative(cwd, destination);
+  const conflict = await checkClaimConflictsForPaths(cwd, opts, [from, to], { requireAgent: true });
+  if (conflict && !opts.force) {
+    const payload = {
+      ...commandFailurePayload('Cannot move file due to scope conflict.', 'agent/claim-conflict', []),
+      ...conflict,
+      errors: conflict.errors,
+    };
+    if (opts.json) {
+      printJson(payload);
+      return 1;
+    }
+    printLine('[ERROR] Scope lock conflict prevents move.');
+    for (const item of conflict.errors) {
+      printLine(`- ${item.message}`);
+      for (const suggestion of item.suggestedNext) {
+        printLine(`  - suggestedNext: ${suggestion}`);
+      }
+    }
+    return 1;
+  }
+
+  const payload = {
+    success: true,
+    from,
+    to,
+    dryRun: Boolean(opts.dryRun),
+  };
+
+  if (opts.dryRun) {
+    if (opts.json) {
+      printJson(payload);
+      return 0;
+    }
+    printLine(`Dry run: move ${from} -> ${to}`);
+    return 0;
+  }
+
+  if (existsSync(destination)) {
+    if (!opts.force) {
+      throw new Error(`Destination already exists: ${to}`);
+    }
+    await fs.unlink(destination);
+  }
+
+  await fs.mkdir(path.dirname(destination), { recursive: true });
+  await fs.rename(source, destination);
+  if (opts.json) {
+    printJson(payload);
+    return 0;
+  }
+  printLine(`Moved ${from} -> ${to}`);
+  return 0;
+}
+
+async function runAssess(opts) {
+  const cwd = path.resolve(opts.cwd || '.');
+  const config = await readConfig(cwd, opts.config || DEFAULT_CONFIG_NAME);
+  const issues = [];
+  const docs = await loadAllDocs(cwd, config, opts, issues);
+  validateDocs(cwd, docs, issues);
+  const split = splitIssues(issues);
+  const health = buildHealthOverview(docs, issues, config);
+  const queuePayload = buildBacklogQueue(cwd, config, docs, issues, {
+    scope: opts.scope || '',
+    includeTerminal: false,
+    limit: 6,
+  });
+
+  let grade = 'PASS';
+  if (split.errors.length > 0) {
+    grade = 'FAIL';
+  } else if (split.warnings.length > 0 || health.stale > 0) {
+    grade = 'WARN';
+  }
+
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    grade,
+    success: grade === 'PASS' || grade === 'WARN',
+    summary: {
+      total: health.total,
+      errors: split.errors.length,
+      warnings: split.warnings.length,
+      stale: health.stale,
+      blocked: health.blocked,
+      inProgress: health.inProgress,
+    },
+    nextAction: queuePayload.candidates[0] || null,
+    topRisks: queuePayload.candidates,
+    errors: split.errors,
+    warnings: split.warnings,
+    suggestedNext: buildIssueSummary([...split.errors, ...split.warnings], 8),
+  };
+
+  if (opts.json) {
+    printJson(payload);
+    return payload.success ? 0 : 1;
+  }
+
+  printLine(`\nKanban assessment: ${payload.grade}`);
+  printLine(`- docs: ${payload.summary.total}`);
+  printLine(`- errors: ${payload.summary.errors}`);
+  printLine(`- warnings: ${payload.summary.warnings}`);
+  printLine(`- stale (${health.staleSinceDays}d): ${payload.summary.stale}`);
+  if (!payload.nextAction) {
+    printLine('No immediate next action found.');
+  } else {
+    printLine(`Top action: ${payload.nextAction.id || payload.nextAction.file} [${payload.nextAction.status}]`);
+  }
+  if (payload.suggestedNext.length > 0) {
+    printLine('Suggested next commands:');
+    for (const suggestion of payload.suggestedNext) {
+      printLine(`- ${suggestion}`);
+    }
+  }
+  return payload.success ? 0 : 1;
+}
+
+async function runDocsIndex(opts) {
+  const cwd = path.resolve(opts.cwd || '.');
+  const config = await readConfig(cwd, opts.config || DEFAULT_CONFIG_NAME);
+  const issues = [];
+  const docs = await loadAllDocs(cwd, config, opts, issues);
+  validateDocs(cwd, docs, issues);
+  const split = splitIssues(issues);
+  const scope = opts.scope ? normalizeQueueScope(cwd, opts.scope) : '';
+  const selectedType = String(opts.type || '').trim();
+  const selectedStatus = String(opts.status || '').trim();
+  const selectedCollection = String(opts.collection || '').trim();
+
+  const docsRoot = normalizePath(config.docsRoot || 'docs');
+  const includeKanban = Boolean(opts.includeKanban);
+  const records = [];
+  const counters = {
+    byType: new Map(),
+    byCollection: new Map(),
+    byStatus: new Map(),
+  };
+
+  for (const doc of docs) {
+    const rel = normalizePath(doc.rel);
+    if (scope && !fileMatchesScope(rel, scope)) {
+      continue;
+    }
+    if (!includeKanban && !fileMatchesScope(rel, docsRoot) && !rel.startsWith('docs/')) {
+      continue;
+    }
+    if (selectedType && doc.type !== selectedType) {
+      continue;
+    }
+    if (selectedStatus && String(doc.data?.status || '').trim() !== selectedStatus) {
+      continue;
+    }
+    if (selectedCollection && doc.collection !== selectedCollection) {
+      continue;
+    }
+
+    const status = String(doc.data?.status || '');
+    incrementCounter(counters.byType, doc.type);
+    incrementCounter(counters.byCollection, doc.collection);
+    incrementCounter(counters.byStatus, status);
+
+    const searchText = `${doc.data?.title || ''} ${doc.data?.summary_landing || ''} ${doc.data?.summary_developers || ''} ${doc.data?.id || ''}`
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+
+    records.push({
+      id: doc.data?.id,
+      type: doc.type,
+      collection: doc.collection,
+      status,
+      title: doc.data?.title || '',
+      file: rel,
+      summary: doc.data?.summary_developers || doc.data?.summary_landing || '',
+      owner: doc.data?.owner || doc.data?.assignee || null,
+      tags: doc.data?.tags || [],
+      searchText,
+      related: doc.data?.related_docs || [],
+    });
+  }
+
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    source: 'docs:index',
+    out: String(opts.out || '.kan/docs-index.json'),
+    scanned: docs.length,
+    records: records.length,
+    scope: scope || null,
+    filters: {
+      type: selectedType || null,
+      status: selectedStatus || null,
+      collection: selectedCollection || null,
+    },
+    counts: {
+      byType: Object.fromEntries(counters.byType),
+      byCollection: Object.fromEntries(counters.byCollection),
+      byStatus: Object.fromEntries(counters.byStatus),
+    },
+    success: split.errors.length === 0,
+    errors: split.errors,
+    warnings: split.warnings,
+    suggestedNext: buildIssueSummary([...split.errors, ...split.warnings], 6),
+  };
+
+  const out = path.resolve(cwd, opts.out || '.kan/docs-index.json');
+  await writeJsonOut(out, {
+    generatedAt: payload.generatedAt,
+    docs: records,
+    counts: payload.counts,
+    recordsLength: records.length,
+    scope: payload.scope,
+    filters: payload.filters,
+  });
+
+  if (opts.json) {
+    printJson(payload);
+    return payload.success ? 0 : 1;
+  }
+  printLine(`docs index generated: ${path.relative(cwd, out)} (${records.length} records)`);
+  return payload.success ? 0 : 1;
+}
+
 async function runHealth(opts) {
   const cwd = path.resolve(opts.cwd || '.');
   const config = await readConfig(cwd, opts.config || DEFAULT_CONFIG_NAME);
@@ -3831,6 +5018,195 @@ async function runHealth(opts) {
   return summary.errors ? 1 : 0;
 }
 
+function buildGroomSummary(docs) {
+  const byType = new Map();
+  const byCollection = new Map();
+  for (const doc of docs) {
+    byType.set(doc.type, (byType.get(doc.type) || 0) + 1);
+    byCollection.set(doc.collection, (byCollection.get(doc.collection) || 0) + 1);
+  }
+  return {
+    byType: Object.fromEntries(byType),
+    byCollection: Object.fromEntries(byCollection),
+  };
+}
+
+function buildSuggestedFromIssues(issues, limit = 8) {
+  const next = [];
+  const seen = new Set();
+  for (const issue of issues) {
+    for (const suggestion of issue.suggestedNext || []) {
+      if (!seen.has(suggestion)) {
+        next.push(suggestion);
+        seen.add(suggestion);
+      }
+      if (next.length >= limit) {
+        return next;
+      }
+    }
+  }
+  return next;
+}
+
+async function runBacklogGroom(opts) {
+  const cwd = path.resolve(opts.cwd || '.');
+  const config = await readConfig(cwd, opts.config || DEFAULT_CONFIG_NAME);
+  const issues = [];
+  const docs = await loadAllDocs(cwd, config, opts, issues);
+  validateDocs(cwd, docs, issues);
+  const split = splitIssues(issues);
+
+  const scope = normalizeGroomScope(cwd, opts.scope);
+  const selectedType = String(opts.type || '').trim();
+  const selectedStatus = String(opts.status || '').trim();
+  const selectedCollection = String(opts.collection || '').trim();
+  const limit = parsePositiveInt(opts.limit, 40, 'limit');
+  const hasFocus = Boolean(scope || selectedType || selectedStatus || selectedCollection);
+
+  const scopedDocs = [];
+  const scopedDocSources = new Set();
+  for (const doc of docs) {
+    const source = doc.source || doc.file;
+    const rel = normalizePath(toRelative(cwd, source));
+    if (scope && !fileMatchesScope(rel, scope)) {
+      continue;
+    }
+    if (selectedType && doc.type !== selectedType) {
+      continue;
+    }
+    if (selectedStatus && String(doc.data?.status || '').trim() !== selectedStatus) {
+      continue;
+    }
+    if (selectedCollection && doc.collection !== selectedCollection) {
+      continue;
+    }
+    scopedDocs.push(doc);
+    scopedDocSources.add(source);
+  }
+
+  const docByRelative = new Map();
+  const docByAbsolute = new Map();
+  for (const doc of docs) {
+    docByRelative.set(normalizePath(toRelative(cwd, doc.source || doc.file)), doc);
+    docByAbsolute.set(doc.source || doc.file, doc);
+  }
+
+  const filteredIssues = (issueList) =>
+    issueList.filter((item) => {
+      if (!hasFocus) {
+        return true;
+      }
+      const issueDoc = docByAbsolute.get(item.file) || docByRelative.get(normalizePath(item.file));
+      if (!issueDoc) {
+        const rel = normalizePath(item.file || '');
+        if (!rel || rel.includes('kan.config.json') || rel.includes('.kan/')) {
+          return true;
+        }
+        return false;
+      }
+      return scopedDocSources.has(issueDoc.source || issueDoc.file);
+    });
+
+  const errors = filteredIssues(split.errors);
+  const warnings = filteredIssues(split.warnings);
+  const staleSince = calculateStale(config.cleanup?.staleDays || 90);
+  const staleDocs = scopedDocs.filter((doc) => {
+    const updated = doc.data?.lastUpdated ? Date.parse(doc.data.lastUpdated) : NaN;
+    return Number.isNaN(updated) || updated < staleSince;
+  });
+
+  const summary = buildGroomSummary(scopedDocs);
+  const payload = {
+    success: errors.length === 0,
+    scanned: docs.length,
+    selectedScans: scopedDocs.length,
+    staleSinceDays: config.cleanup?.staleDays || 90,
+    stale: staleDocs.length,
+    blocked: scopedDocs.filter((doc) => doc.data?.status === 'blocked').length,
+    inProgress: scopedDocs.filter((doc) => doc.data?.status === 'in-progress').length,
+    summary,
+    focus: {
+      scope: scope || null,
+      type: selectedType || null,
+      status: selectedStatus || null,
+      collection: selectedCollection || null,
+    },
+    limit,
+    errors,
+    warnings,
+    count: {
+      errors: errors.length,
+      warnings: warnings.length,
+      total: errors.length + warnings.length,
+    },
+    issues: [...errors, ...warnings].slice(0, limit),
+    suggestedNext: [],
+  };
+  payload.suggestedNext = buildSuggestedFromIssues(payload.issues, 10);
+  if (payload.suggestedNext.length === 0) {
+    payload.suggestedNext = ['Run `kan lint --json` after applying fixes.'];
+  }
+
+  if (opts.json) {
+    printJson(payload);
+    return payload.success ? 0 : 1;
+  }
+
+  printLine('\nKanban backlog grooming');
+  printLine(`- docs: ${payload.selectedScans} / ${payload.scanned} ${hasFocus ? '(filtered)' : '(all)'}`);
+  if (hasFocus) {
+    const fragments = [];
+    if (scope) {
+      fragments.push(`scope=${scope}`);
+    }
+    if (selectedType) {
+      fragments.push(`type=${selectedType}`);
+    }
+    if (selectedStatus) {
+      fragments.push(`status=${selectedStatus}`);
+    }
+    if (selectedCollection) {
+      fragments.push(`collection=${selectedCollection}`);
+    }
+    printLine(`- focus: ${fragments.join(', ')}`);
+  }
+  printLine(`- quality: ${payload.count.errors} errors, ${payload.count.warnings} warnings`);
+  printLine(`- blocked: ${payload.blocked}`);
+  printLine(`- in-progress: ${payload.inProgress}`);
+  printLine(`- stale (${payload.staleSinceDays}d): ${payload.stale}`);
+
+  if (payload.issues.length === 0) {
+    printLine('No groom-blocking issues in selected scope.');
+  } else {
+    if (errors.length > 0) {
+      printLine('\nErrors:');
+      for (const issue of errors.slice(0, limit)) {
+        printLine(`- [${issue.file}] (${issue.ruleId}): ${issue.message}`);
+        for (const suggestion of issue.suggestedNext || []) {
+          printLine(`  - suggestedNext: ${suggestion}`);
+        }
+      }
+    }
+    if (warnings.length > 0) {
+      printLine('\nWarnings:');
+      for (const issue of warnings.slice(0, limit)) {
+        printLine(`- [${issue.file}] (${issue.ruleId}): ${issue.message}`);
+        for (const suggestion of issue.suggestedNext || []) {
+          printLine(`  - suggestedNext: ${suggestion}`);
+        }
+      }
+    }
+  }
+  if (payload.suggestedNext.length > 0) {
+    printLine('\nSuggested next commands:');
+    for (const suggestion of payload.suggestedNext) {
+      printLine(`- ${suggestion}`);
+    }
+  }
+
+  return payload.success ? 0 : 1;
+}
+
 function startRecommendations(context) {
   const recommendations = [];
   if (!context.config.exists) {
@@ -3850,6 +5226,12 @@ function startRecommendations(context) {
   }
   if (!context.plugins.includes('compound-engineering')) {
     recommendations.push('Run `kan plugin install compound-engineering` for full autonomy loop support.');
+  }
+
+  if (context.isStarterRepo && context.starterTemplateVersion && context.starterTemplateVersion !== version) {
+    recommendations.push(
+      `Run \`kan update\` to refresh starter assets from v${version} (current marker: ${context.starterTemplateVersion}).`,
+    );
   }
 
   if (context.config.isHealthy && context.collections.every((entry) => entry.exists)) {
@@ -3883,6 +5265,8 @@ function buildStartPayload(cwd, context) {
         scopeGuard: context.hasGuardWorkflow,
         compoundAutopilot: context.hasCompoundWorkflow,
       },
+      starterTemplateVersion: context.starterTemplateVersion || null,
+      starterTemplate: context.starterTemplate || null,
       plugins: context.plugins,
       pluginRegistryPath: context.pluginRegistry.path,
       pluginRegistryUpdatedAt: context.pluginRegistry.updatedAt,
@@ -3899,6 +5283,7 @@ async function runStart(opts) {
   const configPath = opts.config || DEFAULT_CONFIG_NAME;
   const absoluteConfigPath = path.resolve(cwd, configPath);
   const isStarterRepo = await fileExists(path.join(cwd, STARTER_MARKER_PATH));
+  const starterMarker = isStarterRepo ? await readStarterTemplateMarker(cwd).catch(() => null) : null;
 
   let gitRoot = null;
   try {
@@ -3940,6 +5325,8 @@ async function runStart(opts) {
 
   const context = {
     isStarterRepo,
+    starterTemplateVersion: starterMarker?.packageVersion || null,
+    starterTemplate: starterMarker?.template || null,
     gitRoot,
     pluginRegistry,
     plugins,
@@ -3971,6 +5358,11 @@ async function runStart(opts) {
   printLine(`- gitRoot: ${payload.context.gitRoot || 'not-in-git-root'}`);
   printLine(`- version: ${version}`);
   printLine(`- starter repo: ${payload.context.isStarterRepo ? 'yes' : 'no'}`);
+  if (payload.context.isStarterRepo) {
+    printLine(
+      `- starter template: ${payload.context.starterTemplate || 'unknown'} (${payload.context.starterTemplateVersion || 'unknown'})`,
+    );
+  }
   printLine(`- config: ${payload.context.config.path} (${payload.context.config.exists ? 'found' : 'missing'})`);
   if (context.config.error) {
     printLine(`- config error: ${context.config.error.message}`);
@@ -4103,6 +5495,30 @@ export async function run(argv = process.argv) {
     });
 
   program
+    .command('update')
+    .description('Refresh starter files from current CLI/template version')
+    .option('--template <name>', 'template name to use', 'starter')
+    .option('--root <path>', 'target root directory', '.')
+    .option('--force', 'overwrite existing template files from source')
+    .option('--dry-run', 'show planned file changes without writing')
+    .option('--json', 'json output')
+    .action(async (options) => {
+      try {
+        const payload = await runUpdate(options);
+        if (options.json) {
+          printJson(payload);
+        }
+      } catch (error) {
+        if (options.json) {
+          printJson(commandFailurePayloadFromError(error, 'update-cmd/failure'));
+        } else {
+          printLine(`[ERROR] ${error.message}`);
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  program
     .command('start')
     .description('Emit context snapshot and capability inventory for agent sessions')
     .option('--config <path>', 'config file', DEFAULT_CONFIG_NAME)
@@ -4173,6 +5589,202 @@ export async function run(argv = process.argv) {
       } catch (error) {
         if (options.json) {
           printJson(commandFailurePayloadFromError(error, 'cmd/failure'));
+        } else {
+          printLine(`[ERROR] ${error.message}`);
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  program
+    .command('status')
+    .description('Summarize workload and top-at-risk documents')
+    .option('--scope <path>', 'scope path to focus')
+    .option('--type <type>', 'filter by document type')
+    .option('--status <status>', 'filter by status')
+    .option('--collection <name>', 'filter by collection')
+    .option('--limit <n>', 'max queued items shown in the status view', '8')
+    .option('--config <path>', 'config file', DEFAULT_CONFIG_NAME)
+    .option('--cwd <path>', 'working directory', '.')
+    .option('--json', 'json output')
+    .action(async (options) => {
+      try {
+        process.exitCode = await runStatus(options);
+      } catch (error) {
+        if (options.json) {
+          printJson(commandFailurePayloadFromError(error, 'status/cmd-failure'));
+        } else {
+          printLine(`[ERROR] ${error.message}`);
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  program
+    .command('queue')
+    .description('List backlog queue order for planning and execution')
+    .option('--scope <path>', 'scope path to focus')
+    .option('--type <type>', 'filter by document type')
+    .option('--status <status>', 'filter by status')
+    .option('--collection <name>', 'filter by collection')
+    .option('--include-terminal', 'include terminal statuses in the queue')
+    .option('--limit <n>', 'max items to return', '25')
+    .option('--config <path>', 'config file', DEFAULT_CONFIG_NAME)
+    .option('--cwd <path>', 'working directory', '.')
+    .option('--json', 'json output')
+    .action(async (options) => {
+      try {
+        process.exitCode = await runQueue(options);
+      } catch (error) {
+        if (options.json) {
+          printJson(commandFailurePayloadFromError(error, 'queue/cmd-failure'));
+        } else {
+          printLine(`[ERROR] ${error.message}`);
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  program
+    .command('next')
+    .description('Choose the highest-priority actionable backlog item')
+    .option('--scope <path>', 'scope path to focus')
+    .option('--type <type>', 'filter by document type')
+    .option('--status <status>', 'filter by status')
+    .option('--collection <name>', 'filter by collection')
+    .option('--config <path>', 'config file', DEFAULT_CONFIG_NAME)
+    .option('--cwd <path>', 'working directory', '.')
+    .option('--json', 'json output')
+    .action(async (options) => {
+      try {
+        process.exitCode = await runNext(options);
+      } catch (error) {
+        if (options.json) {
+          printJson(commandFailurePayloadFromError(error, 'next/cmd-failure'));
+        } else {
+          printLine(`[ERROR] ${error.message}`);
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  const backlogCommand = program
+    .command('backlog')
+    .description('Backlog workflow helpers for queue, move, and status updates')
+    .action(() => {
+      printLine('kan backlog has subcommands: summary, set, move');
+    });
+
+  backlogCommand
+    .command('summary')
+    .description('Print a compact summary for a backlog slice')
+    .option('--scope <path>', 'scope path to focus')
+    .option('--type <type>', 'filter by document type')
+    .option('--status <status>', 'filter by status')
+    .option('--collection <name>', 'filter by collection')
+    .option('--config <path>', 'config file', DEFAULT_CONFIG_NAME)
+    .option('--cwd <path>', 'working directory', '.')
+    .option('--json', 'json output')
+    .action(async (options) => {
+      try {
+        process.exitCode = await runBacklogSummary(options);
+      } catch (error) {
+        if (options.json) {
+          printJson(commandFailurePayloadFromError(error, 'cmd/failure'));
+        } else {
+          printLine(`[ERROR] ${error.message}`);
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  backlogCommand
+    .command('set <status> <target>')
+    .description('Set a document status in a single transition-safe edit')
+    .option('--agent <name>', 'agent id used for claim enforcement')
+    .option('--force', 'bypass active scope conflict checks')
+    .option('--dry-run', 'preview status update without writing')
+    .option('--config <path>', 'config file', DEFAULT_CONFIG_NAME)
+    .option('--cwd <path>', 'working directory', '.')
+    .option('--json', 'json output')
+    .action(async (status, target, options) => {
+      options.status = status;
+      options.target = target;
+      try {
+        process.exitCode = await runBacklogSet(options);
+      } catch (error) {
+        if (options.json) {
+          printJson(commandFailurePayloadFromError(error, 'cmd/failure'));
+        } else {
+          printLine(`[ERROR] ${error.message}`);
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  backlogCommand
+    .command('move <source> <destination>')
+    .description('Move backlog files with scope-lock checks and dry-run support')
+    .option('--agent <name>', 'agent id used for claim enforcement')
+    .option('--force', 'overwrite destination path')
+    .option('--dry-run', 'preview move without writing')
+    .option('--config <path>', 'config file', DEFAULT_CONFIG_NAME)
+    .option('--cwd <path>', 'working directory', '.')
+    .option('--json', 'json output')
+    .action(async (source, destination, options) => {
+      options.source = source;
+      options.destination = destination;
+      try {
+        process.exitCode = await runBacklogMove(options);
+      } catch (error) {
+        if (options.json) {
+          printJson(commandFailurePayloadFromError(error, 'cmd/failure'));
+        } else {
+          printLine(`[ERROR] ${error.message}`);
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  program
+    .command('assess')
+    .description('Emit a compact planning readiness assessment')
+    .option('--scope <path>', 'scope path to focus')
+    .option('--collection <name>', 'filter by collection')
+    .option('--config <path>', 'config file', DEFAULT_CONFIG_NAME)
+    .option('--cwd <path>', 'working directory', '.')
+    .option('--json', 'json output')
+    .action(async (options) => {
+      try {
+        process.exitCode = await runAssess(options);
+      } catch (error) {
+        if (options.json) {
+          printJson(commandFailurePayloadFromError(error, 'assess/cmd-failure'));
+        } else {
+          printLine(`[ERROR] ${error.message}`);
+        }
+        process.exitCode = 1;
+      }
+    });
+
+  program
+    .command('docs:index')
+    .description('Generate a docs search index payload')
+    .option('--scope <path>', 'scope path to focus')
+    .option('--type <type>', 'filter by document type')
+    .option('--status <status>', 'filter by status')
+    .option('--collection <name>', 'filter by collection')
+    .option('--include-kanban', 'include kanban and docs records when docsRoot is narrowed')
+    .option('--out <path>', 'output path', '.kan/docs-index.json')
+    .option('--config <path>', 'config file', DEFAULT_CONFIG_NAME)
+    .option('--cwd <path>', 'working directory', '.')
+    .option('--json', 'json output')
+    .action(async (options) => {
+      try {
+        process.exitCode = await runDocsIndex(options);
+      } catch (error) {
+        if (options.json) {
+          printJson(commandFailurePayloadFromError(error, 'docs/index-failure'));
         } else {
           printLine(`[ERROR] ${error.message}`);
         }
@@ -4284,6 +5896,42 @@ export async function run(argv = process.argv) {
         process.exitCode = 1;
       }
     });
+
+  const registerBacklogGroom = (command) =>
+    command
+      .option('--scope <path>', 'scope path to limit grooming')
+      .option('--type <type>', 'filter by document type')
+      .option('--status <status>', 'filter by status')
+      .option('--collection <name>', 'filter by collection')
+      .option('--limit <n>', 'max issues to show', '40')
+      .option('--config <path>', 'config file', DEFAULT_CONFIG_NAME)
+      .option('--cwd <path>', 'working directory', '.')
+      .option('--json', 'json output')
+      .action(async (options) => {
+        try {
+          process.exitCode = await runBacklogGroom(options);
+        } catch (error) {
+          if (options.json) {
+            printJson(commandFailurePayloadFromError(error, 'cmd/failure'));
+          } else {
+            printLine(`[ERROR] ${error.message}`);
+          }
+          process.exitCode = 1;
+        }
+      });
+
+  registerBacklogGroom(
+    program
+      .command('grooming')
+      .alias('groom')
+      .description('Run backlog grooming and issue triage'),
+  );
+
+  registerBacklogGroom(
+    program
+      .command('backlog:groom')
+      .description('Run backlog grooming and issue triage'),
+  );
 
   const agentCommand = program.command('agent').description('Coordinate workspace ownership when multiple agents work in parallel');
   agentCommand
